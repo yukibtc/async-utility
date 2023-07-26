@@ -3,5 +3,7 @@
 
 //! Async Utility
 
+pub extern crate futures_util;
+
 pub mod thread;
 pub mod time;
