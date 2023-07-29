@@ -6,6 +6,8 @@
 use core::fmt;
 use core::time::Duration;
 
+#[cfg(not(target_arch = "wasm32"))]
+use crossbeam_channel::{bounded, RecvError};
 use futures_util::stream::{AbortHandle, Abortable};
 use futures_util::Future;
 #[cfg(feature = "blocking")]
@@ -24,6 +26,9 @@ fn new_current_thread() -> Result<Runtime> {
 /// Thread Error
 #[derive(Debug)]
 pub enum Error {
+    /// RecvError
+    #[cfg(not(target_arch = "wasm32"))]
+    Recv(RecvError),
     /// Join Error
     JoinError,
 }
@@ -33,8 +38,17 @@ impl std::error::Error for Error {}
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::Recv(e) => write!(f, "impossible to recv: {e}"),
             Self::JoinError => write!(f, "impossible to join thread"),
         }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl From<RecvError> for Error {
+    fn from(e: RecvError) -> Self {
+        Self::Recv(e)
     }
 }
 
@@ -62,6 +76,21 @@ impl<T> JoinHandle<T> {
             #[cfg(target_arch = "wasm32")]
             Self::Wasm(handle) => handle.join().await.map_err(|_| Error::JoinError),
         }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl<T> JoinHandle<T>
+where
+    T: Send + 'static,
+{
+    /// Join (can be execute in async context)
+    pub fn join_blocking(self) -> Result<T, Error> {
+        let (tx, rx) = bounded(1);
+        spawn(async move {
+            tx.send(self.join().await).unwrap();
+        });
+        rx.recv()?
     }
 }
 

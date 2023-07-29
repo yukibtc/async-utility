@@ -15,10 +15,11 @@ default = []
 blocking = []
 
 [dependencies]
+crossbeam-channel = "0.5"
 futures-util = { version = "0.3", default-features = false, features = ["std", "sink"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "time"] }
+tokio = { version = "1", default-features = false, features = ["rt", "rt-multi-thread", "time"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 gloo-timers = { version = "0.2", features = ["futures"] }

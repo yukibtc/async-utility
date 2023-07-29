@@ -4,6 +4,7 @@
 //! Async Utility
 
 pub extern crate futures_util;
+pub extern crate tokio;
 
 pub mod thread;
 pub mod time;
