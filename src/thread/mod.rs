@@ -6,29 +6,19 @@
 use core::fmt;
 use core::time::Duration;
 
-#[cfg(not(target_arch = "wasm32"))]
-use crossbeam_channel::{bounded, RecvError};
 use futures_util::stream::{AbortHandle, Abortable};
 use futures_util::Future;
-#[cfg(feature = "blocking")]
-use tokio::runtime::{Builder, Runtime};
+#[cfg(not(target_arch = "wasm32"))]
+use tokio::runtime::{Builder, Handle, Runtime};
 
 #[cfg(target_arch = "wasm32")]
 mod wasm;
 
-type Result<T, E = Box<dyn std::error::Error>> = core::result::Result<T, E>;
-
-#[cfg(feature = "blocking")]
-fn new_current_thread() -> Result<Runtime> {
-    Ok(Builder::new_current_thread().enable_all().build()?)
-}
-
 /// Thread Error
 #[derive(Debug)]
 pub enum Error {
-    /// RecvError
     #[cfg(not(target_arch = "wasm32"))]
-    Recv(RecvError),
+    IO(std::io::Error),
     /// Join Error
     JoinError,
 }
@@ -39,16 +29,16 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             #[cfg(not(target_arch = "wasm32"))]
-            Self::Recv(e) => write!(f, "impossible to recv: {e}"),
+            Self::IO(e) => write!(f, "{e}"),
             Self::JoinError => write!(f, "impossible to join thread"),
         }
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-impl From<RecvError> for Error {
-    fn from(e: RecvError) -> Self {
-        Self::Recv(e)
+impl From<std::io::Error> for Error {
+    fn from(e: std::io::Error) -> Self {
+        Self::IO(e)
     }
 }
 
@@ -79,79 +69,58 @@ impl<T> JoinHandle<T> {
     }
 }
 
+/// Spawn new thread
 #[cfg(not(target_arch = "wasm32"))]
-impl<T> JoinHandle<T>
-where
-    T: Send + 'static,
-{
-    /// Join (can be execute in async context)
-    pub fn join_blocking(self) -> Result<T, Error> {
-        let (tx, rx) = bounded(1);
-        spawn(async move {
-            tx.send(self.join().await).unwrap();
-        });
-        rx.recv()?
-    }
-}
-
-/// Spawn
-#[cfg(not(target_arch = "wasm32"))]
-pub fn spawn<T>(future: T) -> Option<JoinHandle<T::Output>>
+pub fn spawn<T>(future: T) -> Result<JoinHandle<T::Output>, Error>
 where
     T: Future + Send + 'static,
     T::Output: Send + 'static,
 {
-    #[cfg(feature = "blocking")]
-    match new_current_thread() {
-        Ok(rt) => {
-            let handle = std::thread::spawn(move || {
-                let res = rt.block_on(future);
-                rt.shutdown_timeout(Duration::from_millis(100));
-                res
-            });
-            Some(JoinHandle::Std(handle))
-        }
-        Err(_) => None,
-    }
-
-    #[cfg(not(feature = "blocking"))]
-    {
+    if Handle::try_current().is_ok() {
         let handle = tokio::task::spawn(future);
-        Some(JoinHandle::Tokio(handle))
+        Ok(JoinHandle::Tokio(handle))
+    } else {
+        let rt: Runtime = Builder::new_current_thread().enable_all().build()?;
+        let handle = std::thread::spawn(move || {
+            let res = rt.block_on(future);
+            rt.shutdown_timeout(Duration::from_millis(100));
+            res
+        });
+        Ok(JoinHandle::Std(handle))
     }
 }
 
-/// Spawn
+/// Spawn a new thread
 #[cfg(target_arch = "wasm32")]
-pub fn spawn<T>(future: T) -> Option<JoinHandle<T::Output>>
+pub fn spawn<T>(future: T) -> Result<JoinHandle<T::Output>, Error>
 where
     T: Future + 'static,
 {
     let handle = self::wasm::spawn(future);
-    Some(JoinHandle::Wasm(handle))
+    Ok(JoinHandle::Wasm(handle))
 }
 
 /// Spawn abortable thread
 #[cfg(not(target_arch = "wasm32"))]
-pub fn abortable<T>(future: T) -> AbortHandle
+pub fn abortable<T>(future: T) -> Result<AbortHandle, Error>
 where
     T: Future + Send + 'static,
     T::Output: Send + 'static,
 {
     let (abort_handle, abort_registration) = AbortHandle::new_pair();
-    spawn(Abortable::new(future, abort_registration));
-    abort_handle
+    spawn(Abortable::new(future, abort_registration))?;
+    Ok(abort_handle)
 }
 
 /// Spawn abortable thread
 #[cfg(target_arch = "wasm32")]
-pub fn abortable<T>(future: T) -> AbortHandle
+pub fn abortable<T>(future: T) -> Result<AbortHandle, Error>
 where
     T: Future + 'static,
 {
     let (abort_handle, abort_registration) = AbortHandle::new_pair();
-    spawn(Abortable::new(future, abort_registration));
-    abort_handle
+    spawn(Abortable::new(future, abort_registration))?;
+    Ok(abort_handle)
 }
 
 /// Sleep
