@@ -123,6 +123,21 @@ where
     Ok(abort_handle)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+pub fn spawn_blocking<F, R>(f: F) -> Result<JoinHandle<R>, Error>
+where
+    F: FnOnce() -> R + Send + 'static,
+    R: Send + 'static,
+{
+    let handle = if Handle::try_current().is_ok() {
+        tokio::task::spawn_blocking(f)
+    } else {
+        let rt: Runtime = Builder::new_current_thread().enable_all().build()?;
+        rt.spawn_blocking(f)
+    };
+    Ok(JoinHandle::Tokio(handle))
+}
+
 /// Sleep
 pub async fn sleep(duration: Duration) {
     #[cfg(not(target_arch = "wasm32"))]
