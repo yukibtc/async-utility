@@ -1,7 +1,7 @@
 // Copyright (c) 2022-2023 Yuki Kishimoto
 // Distributed under the MIT software license
 
-//! Thread
+//! Task
 
 use core::fmt;
 #[cfg(not(target_arch = "wasm32"))]
@@ -19,7 +19,7 @@ mod wasm;
 #[cfg(not(target_arch = "wasm32"))]
 static RUNTIME: OnceLock<Runtime> = OnceLock::new();
 
-/// Thread Error
+/// Task error
 #[derive(Debug)]
 pub enum Error {
     #[cfg(not(target_arch = "wasm32"))]

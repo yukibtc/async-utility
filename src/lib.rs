@@ -6,5 +6,5 @@
 pub extern crate futures_util;
 pub extern crate tokio;
 
-pub mod thread;
+pub mod task;
 pub mod time;
