@@ -5,7 +5,7 @@
 
 use core::fmt;
 #[cfg(not(target_arch = "wasm32"))]
-use core::time::Duration;
+use std::sync::OnceLock;
 
 use futures_util::stream::{AbortHandle, Abortable};
 use futures_util::Future;
@@ -14,6 +14,10 @@ use tokio::runtime::{Builder, Handle, Runtime};
 
 #[cfg(target_arch = "wasm32")]
 mod wasm;
+
+// TODO: use LazyLock when MSRV will be at 1.80.0
+#[cfg(not(target_arch = "wasm32"))]
+static RUNTIME: OnceLock<Runtime> = OnceLock::new();
 
 /// Thread Error
 #[derive(Debug)]
@@ -72,22 +76,17 @@ impl<T> JoinHandle<T> {
 
 /// Spawn new thread
 #[cfg(not(target_arch = "wasm32"))]
-pub fn spawn<T>(future: T) -> Result<JoinHandle<T::Output>, Error>
+pub fn spawn<T>(future: T) -> JoinHandle<T::Output>
 where
     T: Future + Send + 'static,
     T::Output: Send + 'static,
 {
-    if Handle::try_current().is_ok() {
+    if is_tokio_context() {
         let handle = tokio::task::spawn(future);
-        Ok(JoinHandle::Tokio(handle))
+        JoinHandle::Tokio(handle)
     } else {
-        let rt: Runtime = Builder::new_current_thread().enable_all().build()?;
-        let handle = std::thread::spawn(move || {
-            let res = rt.block_on(future);
-            rt.shutdown_timeout(Duration::from_millis(100));
-            res
-        });
-        Ok(JoinHandle::Std(handle))
+        let handle = std::thread::spawn(move || runtime().block_on(future));
+        JoinHandle::Std(handle)
     }
 }
 
@@ -103,38 +102,53 @@ where
 
 /// Spawn abortable thread
 #[cfg(not(target_arch = "wasm32"))]
-pub fn abortable<T>(future: T) -> Result<AbortHandle, Error>
+pub fn abortable<T>(future: T) -> AbortHandle
 where
     T: Future + Send + 'static,
     T::Output: Send + 'static,
 {
     let (abort_handle, abort_registration) = AbortHandle::new_pair();
-    spawn(Abortable::new(future, abort_registration))?;
-    Ok(abort_handle)
+    let _ = spawn(Abortable::new(future, abort_registration));
+    abort_handle
 }
 
 /// Spawn abortable thread
 #[cfg(target_arch = "wasm32")]
-pub fn abortable<T>(future: T) -> Result<AbortHandle, Error>
+pub fn abortable<T>(future: T) -> AbortHandle
 where
     T: Future + 'static,
 {
     let (abort_handle, abort_registration) = AbortHandle::new_pair();
-    spawn(Abortable::new(future, abort_registration))?;
-    Ok(abort_handle)
+    let _ = spawn(Abortable::new(future, abort_registration));
+    abort_handle
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub fn spawn_blocking<F, R>(f: F) -> Result<JoinHandle<R>, Error>
+pub fn spawn_blocking<F, R>(f: F) -> JoinHandle<R>
 where
     F: FnOnce() -> R + Send + 'static,
     R: Send + 'static,
 {
-    let handle = if Handle::try_current().is_ok() {
+    let handle = if is_tokio_context() {
         tokio::task::spawn_blocking(f)
     } else {
-        let rt: Runtime = Builder::new_current_thread().enable_all().build()?;
-        rt.spawn_blocking(f)
+        runtime().spawn_blocking(f)
     };
-    Ok(JoinHandle::Tokio(handle))
+    JoinHandle::Tokio(handle)
+}
+
+#[inline]
+#[cfg(not(target_arch = "wasm32"))]
+fn is_tokio_context() -> bool {
+    Handle::try_current().is_ok()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn runtime() -> &'static Runtime {
+    RUNTIME.get_or_init(|| {
+        Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("failed to create tokio runtime")
+    })
 }
