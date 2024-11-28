@@ -86,12 +86,12 @@ where
 
 /// Spawn a new thread
 #[cfg(target_arch = "wasm32")]
-pub fn spawn<T>(future: T) -> Result<JoinHandle<T::Output>, Error>
+pub fn spawn<T>(future: T) -> JoinHandle<T::Output>
 where
     T: Future + 'static,
 {
     let handle = self::wasm::spawn(future);
-    Ok(JoinHandle::Wasm(handle))
+    JoinHandle::Wasm(handle)
 }
 
 /// Spawn abortable thread
