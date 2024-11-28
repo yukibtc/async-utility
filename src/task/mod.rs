@@ -11,6 +11,8 @@ use futures_util::stream::{AbortHandle, Abortable};
 use futures_util::Future;
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::runtime::{Builder, Handle, Runtime};
+#[cfg(not(target_arch = "wasm32"))]
+use tokio::task::JoinHandle as TokioJoinHandle;
 
 #[cfg(target_arch = "wasm32")]
 mod wasm;
@@ -51,7 +53,7 @@ impl From<std::io::Error> for Error {
 pub enum JoinHandle<T> {
     /// Tokio
     #[cfg(not(target_arch = "wasm32"))]
-    Tokio(tokio::task::JoinHandle<T>),
+    Tokio(TokioJoinHandle<T>),
     /// Wasm
     #[cfg(target_arch = "wasm32")]
     Wasm(self::wasm::JoinHandle<T>),
@@ -118,17 +120,16 @@ where
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub fn spawn_blocking<F, R>(f: F) -> JoinHandle<R>
+pub fn spawn_blocking<F, R>(f: F) -> TokioJoinHandle<R>
 where
     F: FnOnce() -> R + Send + 'static,
     R: Send + 'static,
 {
-    let handle = if is_tokio_context() {
+    if is_tokio_context() {
         tokio::task::spawn_blocking(f)
     } else {
         runtime().spawn_blocking(f)
-    };
-    JoinHandle::Tokio(handle)
+    }
 }
 
 #[inline]
@@ -194,7 +195,7 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     async fn test_spawn_blocking() {
         let handle = spawn_blocking(|| 42);
-        let result = handle.join().await.unwrap();
+        let result = handle.await.unwrap();
         assert_eq!(result, 42);
     }
 
