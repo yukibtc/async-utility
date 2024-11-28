@@ -146,3 +146,73 @@ fn runtime() -> &'static Runtime {
             .expect("failed to create tokio runtime")
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+    use crate::time;
+
+    #[tokio::test]
+    #[cfg(not(target_arch = "wasm32"))]
+    async fn test_is_tokio_context_macros() {
+        assert!(is_tokio_context());
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn test_is_tokio_context_once_lock() {
+        let rt = runtime();
+        let _guard = rt.enter();
+        assert!(is_tokio_context());
+    }
+
+    #[tokio::test]
+    #[cfg(not(target_arch = "wasm32"))]
+    async fn test_spawn() {
+        let future = async {
+            time::sleep(Duration::from_secs(1)).await;
+            42
+        };
+        let handle = spawn(future);
+        let result = handle.join().await.unwrap();
+        assert_eq!(result, 42);
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn test_spawn_outside_tokio_ctx() {
+        let future = async {
+            time::sleep(Duration::from_secs(1)).await;
+            42
+        };
+        let _handle = spawn(future);
+    }
+
+    #[tokio::test]
+    #[cfg(not(target_arch = "wasm32"))]
+    async fn test_spawn_blocking() {
+        let handle = spawn_blocking(|| 42);
+        let result = handle.join().await.unwrap();
+        assert_eq!(result, 42);
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn test_spawn_blocking_outside_tokio_ctx() {
+        let _handle = spawn_blocking(|| 42);
+    }
+
+    #[tokio::test]
+    #[cfg(not(target_arch = "wasm32"))]
+    async fn test_abortable() {
+        let future = async {
+            time::sleep(Duration::from_secs(1)).await;
+            42
+        };
+        let abort_handle = abortable(future);
+        abort_handle.abort();
+        assert!(abort_handle.is_aborted());
+    }
+}
