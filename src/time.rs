@@ -11,6 +11,14 @@ use futures_util::future::{AbortHandle, Abortable};
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen_futures::spawn_local;
 
+/// Sleep
+pub async fn sleep(duration: Duration) {
+    #[cfg(not(target_arch = "wasm32"))]
+    tokio::time::sleep(duration).await;
+    #[cfg(target_arch = "wasm32")]
+    gloo_timers::future::sleep(duration).await;
+}
+
 /// Timeout
 pub async fn timeout<F>(timeout: Option<Duration>, future: F) -> Option<F::Output>
 where
