@@ -49,9 +49,6 @@ impl From<std::io::Error> for Error {
 
 /// Join Handle
 pub enum JoinHandle<T> {
-    /// Std
-    #[cfg(not(target_arch = "wasm32"))]
-    Std(std::thread::JoinHandle<T>),
     /// Tokio
     #[cfg(not(target_arch = "wasm32"))]
     Tokio(tokio::task::JoinHandle<T>),
@@ -64,8 +61,6 @@ impl<T> JoinHandle<T> {
     /// Join
     pub async fn join(self) -> Result<T, Error> {
         match self {
-            #[cfg(not(target_arch = "wasm32"))]
-            Self::Std(handle) => handle.join().map_err(|_| Error::JoinError),
             #[cfg(not(target_arch = "wasm32"))]
             Self::Tokio(handle) => handle.await.map_err(|_| Error::JoinError),
             #[cfg(target_arch = "wasm32")]
@@ -81,13 +76,12 @@ where
     T: Future + Send + 'static,
     T::Output: Send + 'static,
 {
-    if is_tokio_context() {
-        let handle = tokio::task::spawn(future);
-        JoinHandle::Tokio(handle)
+    let handle = if is_tokio_context() {
+        tokio::task::spawn(future)
     } else {
-        let handle = std::thread::spawn(move || runtime().block_on(future));
-        JoinHandle::Std(handle)
-    }
+        runtime().spawn(future)
+    };
+    JoinHandle::Tokio(handle)
 }
 
 /// Spawn a new thread
