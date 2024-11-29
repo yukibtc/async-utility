@@ -24,8 +24,6 @@ static RUNTIME: OnceLock<Runtime> = OnceLock::new();
 /// Task error
 #[derive(Debug)]
 pub enum Error {
-    #[cfg(not(target_arch = "wasm32"))]
-    IO(std::io::Error),
     /// Join Error
     JoinError,
 }
@@ -35,17 +33,8 @@ impl std::error::Error for Error {}
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            #[cfg(not(target_arch = "wasm32"))]
-            Self::IO(e) => write!(f, "{e}"),
             Self::JoinError => write!(f, "impossible to join thread"),
         }
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-impl From<std::io::Error> for Error {
-    fn from(e: std::io::Error) -> Self {
-        Self::IO(e)
     }
 }
 
