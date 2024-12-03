@@ -1,8 +1,9 @@
 precommit:
 	cargo fmt --all -- --config format_code_in_doc_comments=true
 	cargo check
-	cargo check --target wasm32-unknown-unknown
 	cargo clippy
+	cargo test
+	cargo check --target wasm32-unknown-unknown
 	cargo clippy --target wasm32-unknown-unknown
 
 clean:

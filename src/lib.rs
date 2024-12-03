@@ -6,5 +6,7 @@
 pub extern crate futures_util;
 pub extern crate tokio;
 
+#[cfg(not(target_arch = "wasm32"))]
+mod runtime;
 pub mod task;
 pub mod time;

@@ -4,22 +4,17 @@
 //! Task
 
 use core::fmt;
-#[cfg(not(target_arch = "wasm32"))]
-use std::sync::OnceLock;
 
 use futures_util::stream::{AbortHandle, Abortable};
 use futures_util::Future;
-#[cfg(not(target_arch = "wasm32"))]
-use tokio::runtime::{Builder, Handle, Runtime};
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::task::JoinHandle as TokioJoinHandle;
 
 #[cfg(target_arch = "wasm32")]
 mod wasm;
 
-// TODO: use LazyLock when MSRV will be at 1.80.0
 #[cfg(not(target_arch = "wasm32"))]
-static RUNTIME: OnceLock<Runtime> = OnceLock::new();
+use crate::runtime;
 
 /// Task error
 #[derive(Debug)]
@@ -61,18 +56,14 @@ impl<T> JoinHandle<T> {
 }
 
 /// Spawn new thread
+#[inline]
 #[cfg(not(target_arch = "wasm32"))]
 pub fn spawn<T>(future: T) -> JoinHandle<T::Output>
 where
     T: Future + Send + 'static,
     T::Output: Send + 'static,
 {
-    let handle = if is_tokio_context() {
-        tokio::task::spawn(future)
-    } else {
-        runtime().spawn(future)
-    };
-    JoinHandle::Tokio(handle)
+    JoinHandle::Tokio(runtime::handle().spawn(future))
 }
 
 /// Spawn a new thread
@@ -108,33 +99,14 @@ where
     abort_handle
 }
 
+#[inline]
 #[cfg(not(target_arch = "wasm32"))]
 pub fn spawn_blocking<F, R>(f: F) -> TokioJoinHandle<R>
 where
     F: FnOnce() -> R + Send + 'static,
     R: Send + 'static,
 {
-    if is_tokio_context() {
-        tokio::task::spawn_blocking(f)
-    } else {
-        runtime().spawn_blocking(f)
-    }
-}
-
-#[inline]
-#[cfg(not(target_arch = "wasm32"))]
-fn is_tokio_context() -> bool {
-    Handle::try_current().is_ok()
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn runtime() -> &'static Runtime {
-    RUNTIME.get_or_init(|| {
-        Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("failed to create tokio runtime")
-    })
+    runtime::handle().spawn_blocking(f)
 }
 
 #[cfg(test)]
@@ -144,25 +116,47 @@ mod tests {
     use super::*;
     use crate::time;
 
+    // TODO: test also wasm
+
     #[tokio::test]
     #[cfg(not(target_arch = "wasm32"))]
     async fn test_is_tokio_context_macros() {
-        assert!(is_tokio_context());
+        assert!(runtime::is_tokio_context());
+    }
+
+    #[async_std::test]
+    #[cfg(not(target_arch = "wasm32"))]
+    async fn test_is_tokio_context_in_async_std() {
+        let handle = runtime::handle();
+        let _guard = handle.enter();
+        assert!(runtime::is_tokio_context());
     }
 
     #[test]
     #[cfg(not(target_arch = "wasm32"))]
     fn test_is_tokio_context_once_lock() {
-        let rt = runtime();
-        let _guard = rt.enter();
-        assert!(is_tokio_context());
+        let handle = runtime::handle();
+        let _guard = handle.enter();
+        assert!(runtime::is_tokio_context());
     }
 
     #[tokio::test]
     #[cfg(not(target_arch = "wasm32"))]
     async fn test_spawn() {
         let future = async {
-            time::sleep(Duration::from_secs(1)).await;
+            time::sleep(Duration::from_secs(5)).await;
+            42
+        };
+        let handle = spawn(future);
+        let result = handle.join().await.unwrap();
+        assert_eq!(result, 42);
+    }
+
+    #[async_std::test]
+    #[cfg(not(target_arch = "wasm32"))]
+    async fn test_spawn_in_async_std() {
+        let future = async {
+            time::sleep(Duration::from_secs(5)).await;
             42
         };
         let handle = spawn(future);
@@ -172,9 +166,23 @@ mod tests {
 
     #[test]
     #[cfg(not(target_arch = "wasm32"))]
+    fn test_spawn_in_smol() {
+        smol::block_on(async {
+            let future = async {
+                time::sleep(Duration::from_secs(5)).await;
+                42
+            };
+            let handle = spawn(future);
+            let result = handle.join().await.unwrap();
+            assert_eq!(result, 42);
+        });
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
     fn test_spawn_outside_tokio_ctx() {
         let future = async {
-            time::sleep(Duration::from_secs(1)).await;
+            time::sleep(Duration::from_secs(5)).await;
             42
         };
         let _handle = spawn(future);

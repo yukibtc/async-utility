@@ -14,12 +14,13 @@ keywords = ["async", "tokio", "util"]
 futures-util = { version = "0.3", default-features = false, features = ["std", "sink"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-tokio = { version = "1", default-features = false, features = ["rt", "rt-multi-thread", "time"] }
+tokio = { version = "1", default-features = false, features = ["macros", "rt", "rt-multi-thread", "time"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 gloo-timers = { version = "0.3", features = ["futures"] }
-tokio = { version = "1", default-features = false, features = ["rt", "sync"] }
+tokio = { version = "1", default-features = false, features = ["macros", "rt", "sync"] }
 wasm-bindgen-futures = "0.4"
 
 [dev-dependencies]
-tokio = { version = "1", default-features = false, features = ["macros"] }
+async-std = { version = "1.13", features = ["attributes"] }
+smol = "2.0"
