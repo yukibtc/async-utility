@@ -202,7 +202,7 @@ checksum = "8b75356056920673b02621b35afd0f7dda9306d03c79a30f5c56c44cf256e3de"
 
 [[package]]
 name = "async-utility"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "async-std",
  "futures-util",
