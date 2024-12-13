@@ -50,7 +50,7 @@ impl<T> JoinHandle<T> {
             #[cfg(not(target_arch = "wasm32"))]
             Self::Tokio(handle) => handle.await.map_err(|_| Error::JoinError),
             #[cfg(target_arch = "wasm32")]
-            Self::Wasm(handle) => handle.join().await.map_err(|_| Error::JoinError),
+            Self::Wasm(handle) => handle.join().await,
         }
     }
 }
@@ -101,12 +101,22 @@ where
 
 #[inline]
 #[cfg(not(target_arch = "wasm32"))]
-pub fn spawn_blocking<F, R>(f: F) -> TokioJoinHandle<R>
+pub fn spawn_blocking<F, R>(f: F) -> JoinHandle<R>
 where
     F: FnOnce() -> R + Send + 'static,
     R: Send + 'static,
 {
-    runtime::handle().spawn_blocking(f)
+    JoinHandle::Tokio(runtime::handle().spawn_blocking(f))
+}
+
+#[inline]
+#[cfg(target_arch = "wasm32")]
+pub fn spawn_blocking<F, R>(f: F) -> JoinHandle<R>
+where
+    F: FnOnce() -> R + 'static,
+    R: 'static,
+{
+    JoinHandle::Wasm(self::wasm::spawn_blocking(f))
 }
 
 #[cfg(test)]
@@ -192,7 +202,7 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     async fn test_spawn_blocking() {
         let handle = spawn_blocking(|| 42);
-        let result = handle.await.unwrap();
+        let result = handle.join().await.unwrap();
         assert_eq!(result, 42);
     }
 
