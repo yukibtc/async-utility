@@ -28,7 +28,7 @@ impl std::error::Error for Error {}
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::JoinError => write!(f, "impossible to join thread"),
+            Self::JoinError => write!(f, "impossible to join task"),
         }
     }
 }
@@ -55,7 +55,7 @@ impl<T> JoinHandle<T> {
     }
 }
 
-/// Spawn new thread
+/// Spawn new task
 #[inline]
 #[cfg(not(target_arch = "wasm32"))]
 pub fn spawn<T>(future: T) -> JoinHandle<T::Output>
@@ -66,7 +66,7 @@ where
     JoinHandle::Tokio(runtime::handle().spawn(future))
 }
 
-/// Spawn a new thread
+/// Spawn a new task
 #[cfg(target_arch = "wasm32")]
 pub fn spawn<T>(future: T) -> JoinHandle<T::Output>
 where
@@ -76,7 +76,7 @@ where
     JoinHandle::Wasm(handle)
 }
 
-/// Spawn abortable thread
+/// Spawn abortable task
 #[cfg(not(target_arch = "wasm32"))]
 pub fn abortable<T>(future: T) -> AbortHandle
 where
@@ -88,7 +88,7 @@ where
     abort_handle
 }
 
-/// Spawn abortable thread
+/// Spawn abortable task
 #[cfg(target_arch = "wasm32")]
 pub fn abortable<T>(future: T) -> AbortHandle
 where
