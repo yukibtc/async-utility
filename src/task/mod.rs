@@ -85,23 +85,19 @@ where
     runtime::handle().spawn_blocking(f)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use std::time::Duration;
 
     use super::*;
     use crate::time;
 
-    // TODO: test also wasm
-
     #[tokio::test]
-    #[cfg(not(target_arch = "wasm32"))]
     async fn test_is_tokio_context_macros() {
         assert!(runtime::is_tokio_context());
     }
 
     #[async_std::test]
-    #[cfg(not(target_arch = "wasm32"))]
     async fn test_is_tokio_context_in_async_std() {
         let handle = runtime::handle();
         let _guard = handle.enter();
@@ -109,7 +105,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(target_arch = "wasm32"))]
     fn test_is_tokio_context_once_lock() {
         let handle = runtime::handle();
         let _guard = handle.enter();
@@ -117,7 +112,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg(not(target_arch = "wasm32"))]
     async fn test_spawn() {
         let future = async {
             time::sleep(Duration::from_secs(5)).await;
@@ -129,7 +123,6 @@ mod tests {
     }
 
     #[async_std::test]
-    #[cfg(not(target_arch = "wasm32"))]
     async fn test_spawn_in_async_std() {
         let future = async {
             time::sleep(Duration::from_secs(5)).await;
@@ -141,7 +134,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(target_arch = "wasm32"))]
     fn test_spawn_in_smol() {
         smol::block_on(async {
             let future = async {
@@ -155,7 +147,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(target_arch = "wasm32"))]
     fn test_spawn_outside_tokio_ctx() {
         let future = async {
             time::sleep(Duration::from_secs(5)).await;
@@ -165,7 +156,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg(not(target_arch = "wasm32"))]
     async fn test_spawn_blocking() {
         let handle = spawn_blocking(|| 42);
         let result = handle.await.unwrap();
@@ -173,7 +163,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(target_arch = "wasm32"))]
     fn test_spawn_blocking_outside_tokio_ctx() {
         let _handle = spawn_blocking(|| 42);
     }
