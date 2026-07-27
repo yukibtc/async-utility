@@ -5,10 +5,9 @@
 
 use core::future::Future;
 use core::time::Duration;
+use std::pin::pin;
 
-use futures_util::future::{AbortHandle, Abortable};
-#[cfg(target_arch = "wasm32")]
-use wasm_bindgen_futures::spawn_local;
+use futures_util::future::{self, Either};
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::runtime;
@@ -32,46 +31,20 @@ pub async fn sleep(duration: Duration) {
 }
 
 /// Timeout
-pub async fn timeout<F>(timeout: Option<Duration>, future: F) -> Option<F::Output>
+pub async fn timeout<F>(duration: Option<Duration>, future: F) -> Option<F::Output>
 where
     F: Future,
 {
-    #[cfg(not(target_arch = "wasm32"))]
-    if let Some(timeout) = timeout {
-        if runtime::is_tokio_context() {
-            tokio::time::timeout(timeout, future).await.ok()
-        } else {
-            let (abort_handle, abort_registration) = AbortHandle::new_pair();
-            let future = Abortable::new(future, abort_registration);
-            tokio::select! {
-                res = future => {
-                    res.ok()
-                }
-                _ = sleep(timeout) => {
-                    abort_handle.abort();
-                    None
-                }
-            }
-        }
-    } else {
-        Some(future.await)
-    }
+    let Some(duration) = duration else {
+        return Some(future.await);
+    };
 
-    #[cfg(target_arch = "wasm32")]
-    {
-        if let Some(timeout) = timeout {
-            let (abort_handle, abort_registration) = AbortHandle::new_pair();
-            let future = Abortable::new(future, abort_registration);
-            spawn_local(async move {
-                gloo_timers::callback::Timeout::new(timeout.as_millis() as u32, move || {
-                    abort_handle.abort();
-                })
-                .forget();
-            });
-            future.await.ok()
-        } else {
-            Some(future.await)
-        }
+    let future = pin!(future);
+    let timer = pin!(sleep(duration));
+
+    match future::select(future, timer).await {
+        Either::Left((output, _timer)) => Some(output),
+        Either::Right(((), _future)) => None,
     }
 }
 
