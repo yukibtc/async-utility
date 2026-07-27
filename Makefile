@@ -5,6 +5,10 @@ precommit:
 	cargo test
 	cargo check --target wasm32-unknown-unknown
 	cargo clippy --target wasm32-unknown-unknown
+	wasm-pack test --firefox --headless
+
+test-wasm-firefox:
+	wasm-pack test --firefox --headless --test wasm_timeout
 
 clean:
 	cargo clean

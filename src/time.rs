@@ -8,6 +8,10 @@ use core::time::Duration;
 use std::pin::pin;
 
 use futures_util::future::{self, Either};
+#[cfg(target_arch = "wasm32")]
+use tokio::sync::oneshot;
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen_futures::spawn_local;
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::runtime;
@@ -30,7 +34,14 @@ pub async fn sleep(duration: Duration) {
     gloo_timers::future::sleep(duration).await;
 }
 
-/// Timeout
+/// Wait for a future to complete until an optional duration has elapsed.
+///
+/// On WASM, the browser timer runs in a separate spawned task and not in the
+/// task polling `future`. Dropping a losing gloo timer directly beside a
+/// browser-backed future can run timer cleanup while that task is still being
+/// polled. In particular, this can reenter the `wasm-bindgen` executor when
+/// cancelling an `async-wsocket` connection. The separate task confines timer
+/// construction and cleanup to its own executor poll.
 pub async fn timeout<F>(duration: Option<Duration>, future: F) -> Option<F::Output>
 where
     F: Future,
@@ -39,35 +50,67 @@ where
         return Some(future.await);
     };
 
-    let future = pin!(future);
-    let timer = pin!(sleep(duration));
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let future = pin!(future);
+        let timer = pin!(sleep(duration));
 
-    match future::select(future, timer).await {
-        Either::Left((output, _timer)) => Some(output),
-        Either::Right(((), _future)) => None,
+        match future::select(future, timer).await {
+            Either::Left((output, _timer)) => Some(output),
+            Either::Right(((), _future)) => None,
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        wasm_timeout(duration, future).await
     }
 }
 
-#[cfg(test)]
+#[cfg(target_arch = "wasm32")]
+async fn wasm_timeout<F>(duration: Duration, future: F) -> Option<F::Output>
+where
+    F: Future,
+{
+    let (elapsed_sender, elapsed_receiver) = oneshot::channel();
+    let (cancel_sender, cancel_receiver) = oneshot::channel();
+
+    spawn_local(async move {
+        let timer = pin!(sleep(duration));
+        let cancellation = pin!(cancel_receiver);
+
+        if let Either::Left(((), _cancellation)) = future::select(timer, cancellation).await {
+            let _ = elapsed_sender.send(());
+        }
+    });
+
+    let future = pin!(future);
+    let elapsed = pin!(elapsed_receiver);
+
+    match future::select(future, elapsed).await {
+        Either::Left((output, _elapsed)) => {
+            let _ = cancel_sender.send(());
+            Some(output)
+        }
+        Either::Right((_elapsed, _future)) => None,
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
 
-    // TODO: test also wasm
-
     #[tokio::test]
-    #[cfg(not(target_arch = "wasm32"))]
     async fn test_sleep_in_tokio() {
         sleep(Duration::from_secs(5)).await;
     }
 
     #[async_std::test]
-    #[cfg(not(target_arch = "wasm32"))]
     async fn test_sleep_in_async_std() {
         sleep(Duration::from_secs(5)).await;
     }
 
     #[test]
-    #[cfg(not(target_arch = "wasm32"))]
     fn test_sleep_in_smol() {
         smol::block_on(async {
             sleep(Duration::from_secs(5)).await;
@@ -75,7 +118,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg(not(target_arch = "wasm32"))]
     async fn test_timeout_tokio() {
         // Timeout
         let result = timeout(Some(Duration::from_secs(1)), async {
@@ -93,7 +135,6 @@ mod tests {
     }
 
     #[async_std::test]
-    #[cfg(not(target_arch = "wasm32"))]
     async fn test_timeout_async_std() {
         // Timeout
         let result = timeout(Some(Duration::from_secs(1)), async {
@@ -111,7 +152,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(target_arch = "wasm32"))]
     fn test_timeout_smol() {
         smol::block_on(async {
             // Timeout

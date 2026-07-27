@@ -21,6 +21,11 @@ gloo-timers = { version = "0.3", features = ["futures"] }
 tokio = { version = "1", default-features = false, features = ["macros", "rt", "sync"] }
 wasm-bindgen-futures = "0.4"
 
-[dev-dependencies]
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 async-std = { version = "1.13", features = ["attributes"] }
 smol = "2.0"
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+async-wsocket = { version = "0.15", default-features = false }
+wasm-bindgen = "0.2"
+wasm-bindgen-test = "0.3"
