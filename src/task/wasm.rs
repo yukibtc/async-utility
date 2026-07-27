@@ -14,7 +14,7 @@ pub struct JoinHandle<T>(Receiver<T>);
 impl<T> JoinHandle<T> {
     pub async fn join(self) -> Result<T> {
         let res = self.0.await;
-        res.map_err(|e| Box::new(e) as Box<(dyn Any + Send + 'static)>)
+        res.map_err(|e| Box::new(e) as Box<dyn Any + Send + 'static>)
     }
 }
 

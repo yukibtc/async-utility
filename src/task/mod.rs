@@ -5,7 +5,6 @@
 
 use core::fmt;
 
-use futures_util::stream::{AbortHandle, Abortable};
 use futures_util::Future;
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::task::JoinHandle as TokioJoinHandle;
@@ -74,29 +73,6 @@ where
 {
     let handle = self::wasm::spawn(future);
     JoinHandle::Wasm(handle)
-}
-
-/// Spawn abortable task
-#[cfg(not(target_arch = "wasm32"))]
-pub fn abortable<T>(future: T) -> AbortHandle
-where
-    T: Future + Send + 'static,
-    T::Output: Send + 'static,
-{
-    let (abort_handle, abort_registration) = AbortHandle::new_pair();
-    let _ = spawn(Abortable::new(future, abort_registration));
-    abort_handle
-}
-
-/// Spawn abortable task
-#[cfg(target_arch = "wasm32")]
-pub fn abortable<T>(future: T) -> AbortHandle
-where
-    T: Future + 'static,
-{
-    let (abort_handle, abort_registration) = AbortHandle::new_pair();
-    let _ = spawn(Abortable::new(future, abort_registration));
-    abort_handle
 }
 
 #[inline]
@@ -200,17 +176,5 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     fn test_spawn_blocking_outside_tokio_ctx() {
         let _handle = spawn_blocking(|| 42);
-    }
-
-    #[tokio::test]
-    #[cfg(not(target_arch = "wasm32"))]
-    async fn test_abortable() {
-        let future = async {
-            time::sleep(Duration::from_secs(1)).await;
-            42
-        };
-        let abort_handle = abortable(future);
-        abort_handle.abort();
-        assert!(abort_handle.is_aborted());
     }
 }
