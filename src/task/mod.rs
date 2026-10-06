@@ -107,6 +107,27 @@ where
     runtime::handle().spawn_blocking(f)
 }
 
+pub struct AbortOnDropHandle<T>(JoinHandle<T>);
+
+impl<T> AbortOnDropHandle<T> {
+    #[inline]
+    pub fn new(handle: JoinHandle<T>) -> Self {
+        Self(handle)
+    }
+
+    #[inline]
+    pub fn abort(&self) {
+        self.0.abort();
+    }
+}
+
+impl<T> Drop for AbortOnDropHandle<T> {
+    #[inline]
+    fn drop(&mut self) {
+        self.abort();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![cfg_attr(target_arch = "wasm32", allow(unexpected_cfgs))]
