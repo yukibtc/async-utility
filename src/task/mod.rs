@@ -43,6 +43,12 @@ enum Inner<T> {
 /// Dropping the handle detaches the task, allowing it to keep running.
 pub struct JoinHandle<T>(Inner<T>);
 
+impl<T> fmt::Debug for JoinHandle<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("JoinHandle").finish()
+    }
+}
+
 impl<T> JoinHandle<T> {
     /// Request cancellation of the task.
     ///
@@ -107,13 +113,8 @@ where
     runtime::handle().spawn_blocking(f)
 }
 
+#[derive(Debug)]
 pub struct AbortOnDropHandle<T>(JoinHandle<T>);
-
-impl<T> fmt::Debug for AbortOnDropHandle<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("AbortOnDropHandle").finish()
-    }
-}
 
 impl<T> AbortOnDropHandle<T> {
     #[inline]
