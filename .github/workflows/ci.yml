@@ -67,7 +67,7 @@ jobs:
           firefox-version: latest-esr
 
       - name: Install wasm-pack
-        run: cargo install wasm-pack --version 0.15.0 --locked
+        run: cargo +stable install wasm-pack --version 0.15.0 --locked
 
       - name: Check
         run: cargo check --locked --all-targets --target wasm32-unknown-unknown
