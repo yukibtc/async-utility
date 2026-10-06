@@ -109,6 +109,12 @@ where
 
 pub struct AbortOnDropHandle<T>(JoinHandle<T>);
 
+impl<T> fmt::Debug for AbortOnDropHandle<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AbortOnDropHandle").finish()
+    }
+}
+
 impl<T> AbortOnDropHandle<T> {
     #[inline]
     pub fn new(handle: JoinHandle<T>) -> Self {
