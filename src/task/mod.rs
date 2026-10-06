@@ -50,6 +50,20 @@ impl<T> fmt::Debug for JoinHandle<T> {
 }
 
 impl<T> JoinHandle<T> {
+    /// Return whether the task has finished, including completed cancellation.
+    ///
+    /// Requesting cancellation with [`Self::abort`] does not immediately finish
+    /// the task. A task may also finish between this check and a call to `abort`.
+    #[inline]
+    pub fn is_finished(&self) -> bool {
+        match &self.0 {
+            #[cfg(not(target_arch = "wasm32"))]
+            Inner::Tokio(handle) => handle.is_finished(),
+            #[cfg(target_arch = "wasm32")]
+            Inner::Wasm(handle) => handle.is_finished(),
+        }
+    }
+
     /// Request cancellation of the task.
     ///
     /// Await the handle to wait for cancellation and release of the task's
@@ -278,12 +292,49 @@ mod tests {
 
     #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
-    async fn abort_before_first_poll() {
-        let (handle, mut started, mut dropped) = pending_task();
+    async fn is_finished_pending_task() {
+        let (mut handle, started, dropped) = pending_task();
+        assert!(!handle.is_finished());
+
+        started.await.unwrap();
+        assert!(!handle.is_finished());
 
         handle.abort();
+        assert!(!handle.is_finished());
+        dropped.await.unwrap();
+        assert!(handle.is_finished());
+        assert!(matches!((&mut handle).await, Err(JoinError)));
+        assert!(handle.is_finished());
+    }
 
-        assert!(matches!(handle.await, Err(JoinError)));
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    async fn is_finished_completed_task() {
+        let (completed_tx, completed_rx) = oneshot::channel();
+        let mut handle = spawn(async move {
+            completed_tx.send(()).unwrap();
+            42
+        });
+        // Both test executors run on one thread, so the task finishes before
+        // this test resumes after receiving its completion signal.
+        completed_rx.await.unwrap();
+
+        assert!(handle.is_finished());
+        assert!(handle.is_finished());
+        assert_eq!((&mut handle).await.unwrap(), 42);
+        assert!(handle.is_finished());
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    async fn abort_before_first_poll() {
+        let (mut handle, mut started, mut dropped) = pending_task();
+
+        handle.abort();
+        assert!(!handle.is_finished());
+
+        assert!(matches!((&mut handle).await, Err(JoinError)));
+        assert!(handle.is_finished());
         assert_eq!(
             started.try_recv(),
             Err(oneshot::error::TryRecvError::Closed)
