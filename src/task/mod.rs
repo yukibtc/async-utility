@@ -4,9 +4,10 @@
 //! Task
 
 use core::fmt;
+use core::future::Future;
+use core::pin::Pin;
+use core::task::{Context, Poll};
 
-use futures_util::stream::{AbortHandle, Abortable};
-use futures_util::Future;
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::task::JoinHandle as TokioJoinHandle;
 
@@ -18,23 +19,17 @@ use crate::runtime;
 
 /// Task error
 #[derive(Debug)]
-pub enum Error {
-    /// Join Error
-    JoinError,
-}
+pub struct JoinError;
 
-impl std::error::Error for Error {}
+impl std::error::Error for JoinError {}
 
-impl fmt::Display for Error {
+impl fmt::Display for JoinError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::JoinError => write!(f, "impossible to join task"),
-        }
+        f.write_str("impossible to join task")
     }
 }
 
-/// Join Handle
-pub enum JoinHandle<T> {
+enum Inner<T> {
     /// Tokio
     #[cfg(not(target_arch = "wasm32"))]
     Tokio(TokioJoinHandle<T>),
@@ -43,14 +38,39 @@ pub enum JoinHandle<T> {
     Wasm(self::wasm::JoinHandle<T>),
 }
 
+/// A handle for awaiting a spawned task or requesting its cancellation.
+///
+/// Dropping the handle detaches the task, allowing it to keep running.
+pub struct JoinHandle<T>(Inner<T>);
+
 impl<T> JoinHandle<T> {
-    /// Join
-    pub async fn join(self) -> Result<T, Error> {
-        match self {
+    /// Request cancellation of the task.
+    ///
+    /// Await the handle to wait for cancellation and release of the task's
+    /// resources. Cancellation returns [`JoinError`]; a task that has
+    /// already completed retains its result. Repeated calls are harmless.
+    #[inline]
+    pub fn abort(&self) {
+        match &self.0 {
             #[cfg(not(target_arch = "wasm32"))]
-            Self::Tokio(handle) => handle.await.map_err(|_| Error::JoinError),
+            Inner::Tokio(handle) => handle.abort(),
             #[cfg(target_arch = "wasm32")]
-            Self::Wasm(handle) => handle.join().await.map_err(|_| Error::JoinError),
+            Inner::Wasm(handle) => handle.abort(),
+        }
+    }
+}
+
+impl<T> Future for JoinHandle<T> {
+    type Output = Result<T, JoinError>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let handle: &mut JoinHandle<T> = self.get_mut();
+
+        match &mut handle.0 {
+            #[cfg(not(target_arch = "wasm32"))]
+            Inner::Tokio(handle) => Pin::new(handle).poll(cx).map_err(|_| JoinError),
+            #[cfg(target_arch = "wasm32")]
+            Inner::Wasm(handle) => Pin::new(handle).poll(cx),
         }
     }
 }
@@ -63,7 +83,8 @@ where
     T: Future + Send + 'static,
     T::Output: Send + 'static,
 {
-    JoinHandle::Tokio(runtime::handle().spawn(future))
+    let handle = runtime::handle().spawn(future);
+    JoinHandle(Inner::Tokio(handle))
 }
 
 /// Spawn a new task
@@ -73,30 +94,7 @@ where
     T: Future + 'static,
 {
     let handle = self::wasm::spawn(future);
-    JoinHandle::Wasm(handle)
-}
-
-/// Spawn abortable task
-#[cfg(not(target_arch = "wasm32"))]
-pub fn abortable<T>(future: T) -> AbortHandle
-where
-    T: Future + Send + 'static,
-    T::Output: Send + 'static,
-{
-    let (abort_handle, abort_registration) = AbortHandle::new_pair();
-    let _ = spawn(Abortable::new(future, abort_registration));
-    abort_handle
-}
-
-/// Spawn abortable task
-#[cfg(target_arch = "wasm32")]
-pub fn abortable<T>(future: T) -> AbortHandle
-where
-    T: Future + 'static,
-{
-    let (abort_handle, abort_registration) = AbortHandle::new_pair();
-    let _ = spawn(Abortable::new(future, abort_registration));
-    abort_handle
+    JoinHandle(Inner::Wasm(handle))
 }
 
 #[inline]
@@ -109,18 +107,65 @@ where
     runtime::handle().spawn_blocking(f)
 }
 
-#[cfg(all(test, not(target_arch = "wasm32")))]
+#[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    #![cfg_attr(target_arch = "wasm32", allow(unexpected_cfgs))]
+
+    use core::future::Future;
+    use core::marker::PhantomPinned;
+    use core::pin::Pin;
+    use core::task::{Context, Poll};
+
+    use tokio::sync::oneshot;
 
     use super::*;
-    use crate::time;
+    #[cfg(not(target_arch = "wasm32"))]
+    use crate::runtime;
 
+    #[cfg(target_arch = "wasm32")]
+    wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
+
+    struct PendingTask {
+        started: Option<oneshot::Sender<()>>,
+        dropped: Option<oneshot::Sender<()>>,
+    }
+
+    impl Future for PendingTask {
+        type Output = ();
+
+        fn poll(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
+            if let Some(started) = self.started.take() {
+                let _ = started.send(());
+            }
+            Poll::Pending
+        }
+    }
+
+    impl Drop for PendingTask {
+        fn drop(&mut self) {
+            if let Some(dropped) = self.dropped.take() {
+                let _ = dropped.send(());
+            }
+        }
+    }
+
+    fn pending_task() -> (JoinHandle<()>, oneshot::Receiver<()>, oneshot::Receiver<()>) {
+        let (started_tx, started_rx) = oneshot::channel();
+        let (dropped_tx, dropped_rx) = oneshot::channel();
+        let handle = spawn(PendingTask {
+            started: Some(started_tx),
+            dropped: Some(dropped_tx),
+        });
+        (handle, started_rx, dropped_rx)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn test_is_tokio_context_macros() {
         assert!(runtime::is_tokio_context());
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[async_std::test]
     async fn test_is_tokio_context_in_async_std() {
         let handle = runtime::handle();
@@ -128,6 +173,7 @@ mod tests {
         assert!(runtime::is_tokio_context());
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn test_is_tokio_context_once_lock() {
         let handle = runtime::handle();
@@ -135,50 +181,34 @@ mod tests {
         assert!(runtime::is_tokio_context());
     }
 
-    #[tokio::test]
-    async fn test_spawn() {
-        let future = async {
-            time::sleep(Duration::from_secs(5)).await;
-            42
-        };
-        let handle = spawn(future);
-        let result = handle.join().await.unwrap();
-        assert_eq!(result, 42);
-    }
-
+    #[cfg(not(target_arch = "wasm32"))]
     #[async_std::test]
     async fn test_spawn_in_async_std() {
-        let future = async {
-            time::sleep(Duration::from_secs(5)).await;
-            42
-        };
+        let future = async { 42 };
         let handle = spawn(future);
-        let result = handle.join().await.unwrap();
+        let result = handle.await.unwrap();
         assert_eq!(result, 42);
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn test_spawn_in_smol() {
         smol::block_on(async {
-            let future = async {
-                time::sleep(Duration::from_secs(5)).await;
-                42
-            };
+            let future = async { 42 };
             let handle = spawn(future);
-            let result = handle.join().await.unwrap();
+            let result = handle.await.unwrap();
             assert_eq!(result, 42);
         });
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn test_spawn_outside_tokio_ctx() {
-        let future = async {
-            time::sleep(Duration::from_secs(5)).await;
-            42
-        };
+        let future = async { 42 };
         let _handle = spawn(future);
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn test_spawn_blocking() {
         let handle = spawn_blocking(|| 42);
@@ -186,20 +216,137 @@ mod tests {
         assert_eq!(result, 42);
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn test_spawn_blocking_outside_tokio_ctx() {
         let _handle = spawn_blocking(|| 42);
     }
 
-    #[tokio::test]
-    #[cfg(not(target_arch = "wasm32"))]
-    async fn test_abortable() {
-        let future = async {
-            time::sleep(Duration::from_secs(1)).await;
-            42
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    async fn await_returns_output() {
+        assert_eq!(spawn(async { 42 }).await.unwrap(), 42);
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    async fn non_unpin_output() {
+        struct Output {
+            value: u8,
+            _pin: PhantomPinned,
+        }
+
+        let make_output = || async {
+            Output {
+                value: 42,
+                _pin: PhantomPinned,
+            }
         };
-        let abort_handle = abortable(future);
-        abort_handle.abort();
-        assert!(abort_handle.is_aborted());
+
+        let mut handle = spawn(make_output());
+        assert_eq!((&mut handle).await.unwrap().value, 42);
+        assert_eq!(spawn(make_output()).await.unwrap().value, 42);
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    async fn abort_before_first_poll() {
+        let (handle, mut started, mut dropped) = pending_task();
+
+        handle.abort();
+
+        assert!(matches!(handle.await, Err(JoinError)));
+        assert_eq!(
+            started.try_recv(),
+            Err(oneshot::error::TryRecvError::Closed)
+        );
+        assert_eq!(dropped.try_recv(), Ok(()));
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    async fn abort_running_task() {
+        let (handle, started, mut dropped) = pending_task();
+        started.await.unwrap();
+
+        handle.abort();
+
+        assert!(matches!(handle.await, Err(JoinError)));
+        assert_eq!(dropped.try_recv(), Ok(()));
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    async fn repeated_abort() {
+        let (handle, started, mut dropped) = pending_task();
+        started.await.unwrap();
+
+        handle.abort();
+        handle.abort();
+
+        assert!(matches!(handle.await, Err(JoinError)));
+        assert_eq!(dropped.try_recv(), Ok(()));
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    async fn abort_completed_task_preserves_output() {
+        let (completed_tx, completed_rx) = oneshot::channel();
+        let handle = spawn(async move {
+            completed_tx.send(()).unwrap();
+            42
+        });
+        // Both test executors run on one thread. The task returns its output
+        // before this test can resume after receiving the completion signal.
+        completed_rx.await.unwrap();
+
+        handle.abort();
+
+        assert_eq!(handle.await.unwrap(), 42);
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    async fn dropping_handle_detaches_task() {
+        let (resume_tx, resume_rx) = oneshot::channel();
+        let (completed_tx, completed_rx) = oneshot::channel();
+        let handle = spawn(async move {
+            resume_rx.await.unwrap();
+            completed_tx.send(42).unwrap();
+        });
+
+        drop(handle);
+        resume_tx.send(()).unwrap();
+
+        assert_eq!(completed_rx.await.unwrap(), 42);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn panic_returns_join_error() {
+        let handle = spawn(async { panic!("task panic") });
+
+        assert!(matches!(handle.await, Err(JoinError)));
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    async fn non_send_future_and_output() {
+        use std::cell::Cell;
+        use std::rc::Rc;
+
+        let value = Rc::new(Cell::new(0));
+        let task_value = value.clone();
+        let (resume_tx, resume_rx) = oneshot::channel();
+        let handle = spawn(async move {
+            resume_rx.await.unwrap();
+            task_value.set(42);
+            task_value
+        });
+        resume_tx.send(()).unwrap();
+
+        let output = handle.await.unwrap();
+        assert!(Rc::ptr_eq(&value, &output));
+        assert_eq!(output.get(), 42);
     }
 }

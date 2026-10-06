@@ -24,6 +24,7 @@ wasm-bindgen-futures = "0.4"
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 async-std = { version = "1.13", features = ["attributes"] }
 smol = "2.0"
+tokio = { version = "1", default-features = false, features = ["sync"] }
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 async-wsocket = { version = "0.15", default-features = false }

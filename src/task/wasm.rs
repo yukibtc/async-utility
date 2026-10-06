@@ -1,40 +1,51 @@
 // Copyright (c) 2022-2023 Yuki Kishimoto
 // Distributed under the MIT software license
 
-use core::any::Any;
-use core::fmt;
-use std::thread::Result;
+use core::future::Future;
+use core::pin::Pin;
+use core::task::{Context, Poll};
 
-use futures_util::Future;
+use futures_util::future::{AbortHandle, Abortable};
 use tokio::sync::oneshot::{self, Receiver};
 use wasm_bindgen_futures::spawn_local;
 
-pub struct JoinHandle<T>(Receiver<T>);
+use super::JoinError;
+
+pub(super) struct JoinHandle<T> {
+    rx: Receiver<T>,
+    abort_handle: AbortHandle,
+}
 
 impl<T> JoinHandle<T> {
-    pub async fn join(self) -> Result<T> {
-        let res = self.0.await;
-        res.map_err(|e| Box::new(e) as Box<dyn Any + Send + 'static>)
+    #[inline]
+    pub(super) fn abort(&self) {
+        self.abort_handle.abort();
     }
 }
 
-impl<T> fmt::Debug for JoinHandle<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.pad("JoinHandle { .. }")
+impl<T> Future for JoinHandle<T> {
+    type Output = Result<T, JoinError>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        Pin::new(&mut self.get_mut().rx)
+            .poll(cx)
+            .map_err(|_| JoinError)
     }
 }
 
-pub fn spawn<T>(f: T) -> JoinHandle<T::Output>
+pub(super) fn spawn<T>(f: T) -> JoinHandle<T::Output>
 where
     T: Future + 'static,
     T::Output: 'static,
 {
-    let (sender, receiver) = oneshot::channel();
+    let (abort_handle, abort_registration) = AbortHandle::new_pair();
+    let (tx, rx) = oneshot::channel();
 
-    spawn_local(async {
-        let res = f.await;
-        sender.send(res).ok();
+    spawn_local(async move {
+        if let Ok(output) = Abortable::new(f, abort_registration).await {
+            let _ = tx.send(output);
+        }
     });
 
-    JoinHandle(receiver)
+    JoinHandle { rx, abort_handle }
 }
