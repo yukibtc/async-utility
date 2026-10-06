@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install nightly toolchain
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt
+
+      - name: Check
+        run: cargo +nightly fmt --all --check -- --config format_code_in_doc_comments=true
+
+  native:
+    name: Native
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2.7.8
+        with:
+          key: native
+
+      - name: Check
+        run: cargo check --locked --all-targets
+
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --locked
+
+  wasm:
+    name: Wasm Firefox
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2.7.8
+        with:
+          key: wasm
+
+      - name: Install Firefox ESR
+        uses: browser-actions/setup-firefox@v1
+        with:
+          firefox-version: latest-esr
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack --version 0.15.0 --locked
+
+      - name: Check
+        run: cargo check --locked --all-targets --target wasm32-unknown-unknown
+
+      - name: Clippy
+        run: cargo clippy --locked --all-targets --target wasm32-unknown-unknown -- -D warnings
+
+      - name: Browser tests
+        run: wasm-pack test --firefox --headless --locked
